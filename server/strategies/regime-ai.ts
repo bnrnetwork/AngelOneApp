@@ -136,20 +136,20 @@ export class RegimeAI {
       const outputTensor = results[outputName];
 
       // Assuming model outputs probabilities for each class
-      const scores = Array.from(outputTensor.data);
+      const scores = Array.from(outputTensor.data) as number[];
       const maxIndex = scores.indexOf(Math.max(...scores));
 
       const regimes: MarketRegime[] = ["SIDEWAYS", "TRENDING", "BREAKOUT"];
       const regime = regimes[maxIndex];
-      const confidence = scores[maxIndex] * 100;
+      const confidence = (scores[maxIndex] ?? 0) * 100;
 
       return {
         regime,
         confidence,
         scores: {
-          sideways: scores[0] * 100,
-          trending: scores[1] * 100,
-          breakout: scores[2] * 100,
+          sideways: (scores[0] ?? 0) * 100,
+          trending: (scores[1] ?? 0) * 100,
+          breakout: (scores[2] ?? 0) * 100,
         },
         reasoning: `ONNX model prediction: ${regime} (confidence: ${confidence.toFixed(1)}%)`,
       };
@@ -198,14 +198,14 @@ export class RegimeAI {
     let score = 50;
 
     // Low ATR favors sideways
-    if (features.atrPercent < this.REGIME_THRESHOLDS.SIDEWAYS.maxAtrPercent) {
+    if (features.atrPercent < RegimeAI.REGIME_THRESHOLDS.SIDEWAYS.maxAtrPercent) {
       score += 15;
     }
 
     // Low VIX favors sideways
     if (
       features.indiaVix <
-      this.REGIME_THRESHOLDS.SIDEWAYS.maxVixLevel
+      RegimeAI.REGIME_THRESHOLDS.SIDEWAYS.maxVixLevel
     ) {
       score += 15;
     }
@@ -214,7 +214,7 @@ export class RegimeAI {
     const rsiDeviation = Math.abs(features.rsi - 50);
     if (
       rsiDeviation >
-      this.REGIME_THRESHOLDS.SIDEWAYS.minRsiDeviation
+      RegimeAI.REGIME_THRESHOLDS.SIDEWAYS.minRsiDeviation
     ) {
       score -= 10;
     } else {
@@ -224,7 +224,7 @@ export class RegimeAI {
     // Low volume spike favors sideways
     if (
       features.volumeSpikeRatio <
-      this.REGIME_THRESHOLDS.SIDEWAYS.maxVolumeSpikeRatio
+      RegimeAI.REGIME_THRESHOLDS.SIDEWAYS.maxVolumeSpikeRatio
     ) {
       score += 10;
     }
@@ -240,8 +240,8 @@ export class RegimeAI {
 
     // Moderate ATR favors trending
     if (
-      features.atrPercent >= this.REGIME_THRESHOLDS.TRENDING.minAtrPercent &&
-      features.atrPercent <= this.REGIME_THRESHOLDS.TRENDING.maxAtrPercent
+      features.atrPercent >= RegimeAI.REGIME_THRESHOLDS.TRENDING.minAtrPercent &&
+      features.atrPercent <= RegimeAI.REGIME_THRESHOLDS.TRENDING.maxAtrPercent
     ) {
       score += 20;
     }
@@ -249,9 +249,9 @@ export class RegimeAI {
     // Moderate VIX favors trending
     if (
       features.indiaVix >=
-        this.REGIME_THRESHOLDS.TRENDING.minVixLevel &&
+        RegimeAI.REGIME_THRESHOLDS.TRENDING.minVixLevel &&
       features.indiaVix <=
-        this.REGIME_THRESHOLDS.TRENDING.maxVixLevel
+        RegimeAI.REGIME_THRESHOLDS.TRENDING.maxVixLevel
     ) {
       score += 15;
     }
@@ -259,7 +259,7 @@ export class RegimeAI {
     // Clear EMA slope favors trending
     if (
       Math.abs(features.ema20Slope) >
-      this.REGIME_THRESHOLDS.TRENDING.minEmaSlope
+      RegimeAI.REGIME_THRESHOLDS.TRENDING.minEmaSlope
     ) {
       score += 15;
     }
@@ -281,7 +281,7 @@ export class RegimeAI {
     // High ATR favors breakout
     if (
       features.atrPercent >
-      this.REGIME_THRESHOLDS.BREAKOUT.minAtrPercent
+      RegimeAI.REGIME_THRESHOLDS.BREAKOUT.minAtrPercent
     ) {
       score += 25;
     }
@@ -289,7 +289,7 @@ export class RegimeAI {
     // Strong volume spike favors breakout
     if (
       features.volumeSpikeRatio >
-      this.REGIME_THRESHOLDS.BREAKOUT.minVolumeSpikeRatio
+      RegimeAI.REGIME_THRESHOLDS.BREAKOUT.minVolumeSpikeRatio
     ) {
       score += 20;
     }
@@ -297,7 +297,7 @@ export class RegimeAI {
     // Large ORB range favors breakout
     if (
       features.orbRangePercent >
-      this.REGIME_THRESHOLDS.BREAKOUT.minOrbRangePercent
+      RegimeAI.REGIME_THRESHOLDS.BREAKOUT.minOrbRangePercent
     ) {
       score += 20;
     }

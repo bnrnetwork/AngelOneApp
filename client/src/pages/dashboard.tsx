@@ -54,7 +54,6 @@ function getStoredDefaultCapital(): number {
   } catch {
     return DEFAULT_CAPITAL;
   }
-    const shouldFetchInstrumentAnalysis = isRunning && runningInstruments.includes(primaryInstrument);
 }
 
 export default function Dashboard() {
@@ -387,7 +386,7 @@ export default function Dashboard() {
                 <Button
                   variant="outline"
                   onClick={() => exitProfitsMutation.mutate()}
-                  disabled={exitProfitsMutation.isPending || activeSignals.filter(s => s.pnl > 0).length === 0}
+                  disabled={exitProfitsMutation.isPending || activeSignals.filter(s => (s.pnl ?? 0) > 0).length === 0}
                   className="border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
                   data-testid="button-exit-profits"
                 >
@@ -397,7 +396,7 @@ export default function Dashboard() {
                 <Button
                   variant="outline"
                   onClick={() => exitLossesMutation.mutate()}
-                  disabled={exitLossesMutation.isPending || activeSignals.filter(s => s.pnl < 0).length === 0}
+                  disabled={exitLossesMutation.isPending || activeSignals.filter(s => (s.pnl ?? 0) < 0).length === 0}
                   className="border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
                   data-testid="button-exit-losses"
                 >

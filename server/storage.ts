@@ -167,7 +167,6 @@ export class DatabaseStorage implements IStorage {
       pnl: moneyPnl,
       exitPrice,
       exitReason: "Manual exit",
-      exitTime: new Date(),
       closedTime: new Date(),
     });
   }
@@ -181,7 +180,6 @@ export class DatabaseStorage implements IStorage {
       .set({
         status: "closed" as any,
         exitReason: "Manual exit",
-        exitTime: now,
         closedTime: now,
         updatedAt: now,
       })
@@ -192,7 +190,7 @@ export class DatabaseStorage implements IStorage {
 
   async exitAllProfitSignals(): Promise<number> {
     const activeSignals = await this.getActiveSignals();
-    const profitSignals = activeSignals.filter(s => s.pnl > 0);
+    const profitSignals = activeSignals.filter(s => (s.pnl ?? 0) > 0);
     
     if (profitSignals.length === 0) return 0;
 
@@ -202,7 +200,6 @@ export class DatabaseStorage implements IStorage {
       .set({
         status: "closed" as any,
         exitReason: "Manual exit",
-        exitTime: now,
         closedTime: now,
         updatedAt: now,
       })
@@ -213,8 +210,8 @@ export class DatabaseStorage implements IStorage {
 
   async exitAllLossSignals(): Promise<number> {
     const activeSignals = await this.getActiveSignals();
-    const lossSignals = activeSignals.filter(s => s.pnl < 0);
-    
+    const lossSignals = activeSignals.filter(s => (s.pnl ?? 0) < 0);
+
     if (lossSignals.length === 0) return 0;
 
     const signalIds = lossSignals.map(s => s.id);
@@ -223,7 +220,6 @@ export class DatabaseStorage implements IStorage {
       .set({
         status: "closed" as any,
         exitReason: "Manual exit",
-        exitTime: now,
         closedTime: now,
         updatedAt: now,
       })

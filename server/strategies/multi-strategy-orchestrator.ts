@@ -427,8 +427,8 @@ export class MultiStrategyOrchestrator {
         target1: riskLevels.target1,
         target2: riskLevels.target2,
         target3: riskLevels.target3,
-        cegimeConfidence: Math.round(regime.confidence),
-        ronfidence: signal.confidence,
+        regimeConfidence: Math.round(regime.confidence),
+        confidence: signal.confidence,
         riskRewardRatio: signal.riskRewardRatio,
         positionSize: posSize,
         biasAlignment: "neutral", // VWAP is neutral
