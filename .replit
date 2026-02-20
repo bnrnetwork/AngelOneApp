@@ -16,6 +16,10 @@ PORT = "5000"
 deploymentTarget = "autoscale"
 run = ["node", "./dist/index.cjs"]
 build = ["npm", "run", "build"]
+ignorePorts = false
+
+[deployment.environment]
+NODE_ENV = "production"
 
 [workflows]
 runButton = "Project"

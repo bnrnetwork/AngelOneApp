@@ -24,6 +24,7 @@ const allowlist = [
   "passport",
   "passport-local",
   "pg",
+  "smartapi-javascript",
   "stripe",
   "uuid",
   "ws",
