@@ -21,12 +21,20 @@ export interface IStorage {
   exitAllLossSignals(): Promise<number>;
 }
 
+function ensureDb() {
+  if (!db) {
+    throw new Error("Database not configured. Set DATABASE_URL environment variable.");
+  }
+  return db;
+}
+
 export class DatabaseStorage implements IStorage {
   async getSignals(strategy?: string): Promise<Signal[]> {
+    const database = ensureDb();
     if (strategy) {
-      return db.select().from(signals).where(eq(signals.strategy, strategy as any)).orderBy(desc(signals.createdAt));
+      return database.select().from(signals).where(eq(signals.strategy, strategy as any)).orderBy(desc(signals.createdAt));
     }
-    return db.select().from(signals).orderBy(desc(signals.createdAt));
+    return database.select().from(signals).orderBy(desc(signals.createdAt));
   }
 
   async getTodaySignals(strategy?: string): Promise<Signal[]> {
@@ -229,4 +237,90 @@ export class DatabaseStorage implements IStorage {
   }
 }
 
-export const storage = new DatabaseStorage();
+// Export a safe storage wrapper that handles missing database
+class SafeStorage implements IStorage {
+  private dbStorage: DatabaseStorage | null = null;
+
+  constructor() {
+    try {
+      if (db) {
+        this.dbStorage = new DatabaseStorage();
+      }
+    } catch (err) {
+      console.warn("⚠️  Storage initialization failed. Database features disabled.");
+    }
+  }
+
+  private ensureStorage(): DatabaseStorage {
+    if (!this.dbStorage) {
+      throw new Error("Database not configured. Please set DATABASE_URL environment variable.");
+    }
+    return this.dbStorage;
+  }
+
+  async getSignals(strategy?: string): Promise<Signal[]> {
+    return this.ensureStorage().getSignals(strategy);
+  }
+
+  async getTodaySignals(strategy?: string): Promise<Signal[]> {
+    return this.ensureStorage().getTodaySignals(strategy);
+  }
+
+  async getSignal(id: string): Promise<Signal | undefined> {
+    return this.ensureStorage().getSignal(id);
+  }
+
+  async getActiveSignals(): Promise<Signal[]> {
+    return this.ensureStorage().getActiveSignals();
+  }
+
+  async createSignal(signal: InsertSignal): Promise<Signal> {
+    return this.ensureStorage().createSignal(signal);
+  }
+
+  async updateSignal(id: string, updates: Partial<Signal>): Promise<Signal | undefined> {
+    return this.ensureStorage().updateSignal(id, updates);
+  }
+
+  async getSignalsByDate(date: string): Promise<Signal[]> {
+    return this.ensureStorage().getSignalsByDate(date);
+  }
+
+  async clearExpiredSignals(date: string): Promise<number> {
+    return this.ensureStorage().clearExpiredSignals(date);
+  }
+
+  async getAvailableSignalDates(): Promise<string[]> {
+    return this.ensureStorage().getAvailableSignalDates();
+  }
+
+  async getLogs(limit?: number): Promise<Log[]> {
+    return this.ensureStorage().getLogs(limit);
+  }
+
+  async createLog(log: InsertLog): Promise<Log> {
+    return this.ensureStorage().createLog(log);
+  }
+
+  async clearTodayData(): Promise<{ signalsDeleted: number; logsDeleted: number }> {
+    return this.ensureStorage().clearTodayData();
+  }
+
+  async exitSignal(id: string, exitPrice: number): Promise<Signal | undefined> {
+    return this.ensureStorage().exitSignal(id, exitPrice);
+  }
+
+  async exitAllSignals(): Promise<number> {
+    return this.ensureStorage().exitAllSignals();
+  }
+
+  async exitAllProfitSignals(): Promise<number> {
+    return this.ensureStorage().exitAllProfitSignals();
+  }
+
+  async exitAllLossSignals(): Promise<number> {
+    return this.ensureStorage().exitAllLossSignals();
+  }
+}
+
+export const storage = new SafeStorage();

@@ -17,10 +17,19 @@ if (!databaseUrl && supabaseUrl) {
   }
 }
 
+// Check if database URL is properly configured
+const hasValidDbUrl = databaseUrl && !databaseUrl.includes('[YOUR-PASSWORD]');
+
+if (!hasValidDbUrl) {
+  console.warn("⚠️  DATABASE_URL not configured. Database features will be disabled.");
+  console.warn("⚠️  Set DATABASE_URL environment variable to enable database persistence.");
+}
+
 console.log("DB URL:", databaseUrl ? databaseUrl.replace(/:[^:@]+@/, ':****@') : 'Not configured');
 
-const pool = new Pool({
+// Create pool only if we have a valid database URL
+const pool = hasValidDbUrl ? new Pool({
   connectionString: databaseUrl,
-});
+}) : null;
 
-export const db = drizzle(pool, { schema });
+export const db = pool ? drizzle(pool, { schema }) : null;
