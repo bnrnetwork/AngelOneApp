@@ -90,15 +90,21 @@ export class RegimeAI {
         return false;
       }
 
-      // Dynamically import onnxruntime
-      const ort = await import("onnxruntime-node");
-      this.onnxRuntime = ort;
+      // Dynamically import onnxruntime (optional dependency)
+      try {
+        const ort = await import("onnxruntime-node");
+        this.onnxRuntime = ort;
 
-      const modelBuffer = fs.readFileSync(this.modelPath);
-      this.session = await ort.InferenceSession.create(modelBuffer);
-      this.modelLoaded = true;
-      console.log("ONNX model loaded successfully");
-      return true;
+        const modelBuffer = fs.readFileSync(this.modelPath);
+        this.session = await ort.InferenceSession.create(modelBuffer);
+        this.modelLoaded = true;
+        console.log("ONNX model loaded successfully");
+        return true;
+      } catch (importError) {
+        console.warn("onnxruntime-node not available. Using heuristic-based classification.");
+        this.modelLoaded = false;
+        return false;
+      }
     } catch (error) {
       console.error("Failed to load ONNX model:", error);
       this.modelLoaded = false;

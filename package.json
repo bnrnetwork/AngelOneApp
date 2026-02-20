@@ -60,8 +60,6 @@
     "memorystore": "^1.6.7",
     "next-themes": "^0.4.6",
     "node-fetch": "^3.3.2",
-    "onnxruntime-node": "^1.24.2",
-    "onnxruntime-web": "^1.24.2",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
     "pg": "^8.16.3",
@@ -114,6 +112,7 @@
     }
   },
   "optionalDependencies": {
-    "bufferutil": "^4.0.8"
+    "bufferutil": "^4.0.8",
+    "onnxruntime-node": "^1.24.2"
   }
 }
