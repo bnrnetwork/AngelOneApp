@@ -62,6 +62,9 @@ export default function Dashboard() {
   const [defaultCapitalInput, setDefaultCapitalInput] = useState<string>(
     String(Math.round(getStoredDefaultCapital() / 1000))
   );
+  const [mode, setMode] = useState<"live" | "backtest">("live");
+  const [backtestStartDate, setBacktestStartDate] = useState<string>("");
+  const [backtestEndDate, setBacktestEndDate] = useState<string>("");
   const capitalSyncedRef = useRef(false);
   const { toast } = useToast();
 
@@ -141,15 +144,27 @@ export default function Dashboard() {
 
   const startMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/engine/start", {
+      const payload: any = {
         instruments: selectedInstruments,
         capital: selectedCapital,
-      });
+        mode,
+      };
+
+      if (mode === "backtest") {
+        if (!backtestStartDate || !backtestEndDate) {
+          throw new Error("Please select both start and end dates for backtest");
+        }
+        payload.startDate = backtestStartDate;
+        payload.endDate = backtestEndDate;
+      }
+
+      const res = await apiRequest("POST", "/api/engine/start", payload);
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/engine/status"] });
-      toast({ title: "Engine Started", description: `Running on ${selectedInstruments.join(", ")}` });
+      const modeText = mode === "live" ? "Live Trading" : `Backtest (${backtestStartDate} to ${backtestEndDate})`;
+      toast({ title: "Engine Started", description: `${modeText} on ${selectedInstruments.join(", ")}` });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -351,6 +366,54 @@ export default function Dashboard() {
                 data-testid="input-default-capital"
               />
             </div>
+
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-card">
+              <button
+                className={`px-3 py-1 text-sm font-medium rounded transition-colors ${
+                  mode === "live"
+                    ? "bg-green-500 text-white"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => setMode("live")}
+                disabled={isRunning}
+                data-testid="button-mode-live"
+              >
+                Live
+              </button>
+              <button
+                className={`px-3 py-1 text-sm font-medium rounded transition-colors ${
+                  mode === "backtest"
+                    ? "bg-blue-500 text-white"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => setMode("backtest")}
+                disabled={isRunning}
+                data-testid="button-mode-backtest"
+              >
+                Backtest
+              </button>
+            </div>
+
+            {mode === "backtest" && !isRunning && (
+              <>
+                <Input
+                  type="date"
+                  value={backtestStartDate}
+                  onChange={(e) => setBacktestStartDate(e.target.value)}
+                  className="w-[150px]"
+                  placeholder="Start Date"
+                  data-testid="input-backtest-start"
+                />
+                <Input
+                  type="date"
+                  value={backtestEndDate}
+                  onChange={(e) => setBacktestEndDate(e.target.value)}
+                  className="w-[150px]"
+                  placeholder="End Date"
+                  data-testid="input-backtest-end"
+                />
+              </>
+            )}
 
             {!isRunning ? (
               <Button

@@ -8,6 +8,7 @@ import { LOT_SIZES, STRIKE_STEPS } from "@shared/schema";
 import { DEFAULT_CAPITAL, MARKET_OPEN_HOUR, MARKET_OPEN_MINUTE, STRATEGY_TIMING_WINDOWS } from "@shared/config";
 import { EmaPullbackEngine } from "./strategies/ema-pullback-engine";
 import { AfternoonVwapMomentumEngine } from "./strategies/afternoon-vwap-momentum-engine";
+import { startBacktest, stopBacktest, getBacktestStatus } from "./backtest-engine";
 
 type BroadcastFn = (type: string, data: any) => void;
 
@@ -1861,7 +1862,10 @@ function getConfidenceReason(strategy: StrategyKey, reason: string): string {
   return reason;
 }
 
-export async function startEngine(instruments: InstrumentType | InstrumentType[]) {
+export async function startEngine(
+  instruments: InstrumentType | InstrumentType[],
+  options?: { mode?: "live" | "backtest"; startDate?: string; endDate?: string }
+) {
   if (engineRunning) {
     throw new Error("Engine is already running");
   }
@@ -1870,11 +1874,48 @@ export async function startEngine(instruments: InstrumentType | InstrumentType[]
   currentInstruments = new Set(instrumentList);
   engineRunning = true;
 
+  const mode = options?.mode || "live";
   const instrumentLabel = instrumentList.join(", ");
-  await storage.createLog({ level: "success", source: "engine", message: `Engine started for ${instrumentLabel}` });
-  broadcast("engine_status", getEngineStatus());
 
-  connectStream();
+  if (mode === "backtest") {
+    await storage.createLog({
+      level: "success",
+      source: "engine",
+      message: `Backtest started for ${instrumentLabel} from ${options?.startDate} to ${options?.endDate}`
+    });
+
+    // Run backtest
+    try {
+      if (!options?.startDate || !options?.endDate) {
+        throw new Error("Start date and end date are required for backtest mode");
+      }
+
+      await startBacktest({
+        instruments: instrumentList,
+        startDate: options.startDate,
+        endDate: options.endDate,
+        capital: currentCapital,
+      });
+    } catch (error: any) {
+      await storage.createLog({
+        level: "error",
+        source: "engine",
+        message: `Backtest error: ${error.message}`
+      });
+      engineRunning = false;
+      throw error;
+    }
+
+    broadcast("engine_status", { ...getEngineStatus(), mode: "backtest", startDate: options?.startDate, endDate: options?.endDate });
+
+    // Backtest completes immediately, so set running to false
+    engineRunning = false;
+    return;
+  } else {
+    await storage.createLog({ level: "success", source: "engine", message: `Live engine started for ${instrumentLabel}` });
+    broadcast("engine_status", { ...getEngineStatus(), mode: "live" });
+    connectStream();
+  }
 
   const indexTokenToInstrument: Record<string, string> = {};
   const indexExchangeTypes: Record<string, number> = {

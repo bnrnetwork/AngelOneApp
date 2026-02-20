@@ -179,6 +179,9 @@ export async function registerRoutes(
   const engineStartSchema = z.object({
     instruments: z.array(z.enum(["NIFTY", "BANKNIFTY", "SENSEX", "CRUDEOIL", "NATURALGAS"])).min(1),
     capital: z.number().optional(),
+    mode: z.enum(["live", "backtest"]).optional().default("live"),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
   });
 
   app.post("/api/engine/start", async (req, res) => {
@@ -187,13 +190,28 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid request. Provide instruments array with at least one valid instrument." });
       }
-      const { instruments, capital } = parsed.data;
+      const { instruments, capital, mode, startDate, endDate } = parsed.data;
+
+      // Validate backtest mode requirements
+      if (mode === "backtest") {
+        if (!startDate || !endDate) {
+          return res.status(400).json({ message: "Backtest mode requires startDate and endDate" });
+        }
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+          return res.status(400).json({ message: "Invalid date format" });
+        }
+        if (start >= end) {
+          return res.status(400).json({ message: "Start date must be before end date" });
+        }
+      }
 
       if (capital) {
         setCapital(capital);
       }
 
-      if (!isLoggedIn()) {
+      if (!isLoggedIn() && mode === "live") {
         const success = await loginToAngelOne();
         setAngeloneConnected(success);
         if (!success) {
@@ -201,8 +219,20 @@ export async function registerRoutes(
         }
       }
 
-      await startEngine(instruments as any);
-      res.json({ message: `Engine started for ${instruments.join(", ")}`, status: getEngineStatus() });
+      // Pass mode and dates to engine
+      await startEngine(instruments as any, { mode, startDate, endDate });
+
+      const modeText = mode === "live" ? "live trading" : `backtest (${startDate} to ${endDate})`;
+      await storage.createLog({
+        level: "success",
+        source: "engine",
+        message: `Engine started in ${modeText} mode for ${instruments.join(", ")}`
+      });
+
+      res.json({
+        message: `Engine started in ${modeText} mode for ${instruments.join(", ")}`,
+        status: getEngineStatus()
+      });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
