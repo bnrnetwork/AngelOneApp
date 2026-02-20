@@ -811,83 +811,93 @@ async function trackStrategyResult(strategy: string, isWin: boolean) {
 }
 
 function analyzeORB(ind: MarketIndicators, hour: number, minute: number): StrategySignalResult | null {
-  // Check trading window: 9:25 to 11:00 (expanded from 9:35-10:30 to catch early breakouts)
-  if (hour < 9 || (hour === 9 && minute < 25) || hour > 11) return null;
+  // Check trading window: 9:25 to 10:45 (tightened from 11:00)
+  if (hour < 9 || (hour === 9 && minute < 25) || hour > 10 || (hour === 10 && minute > 45)) return null;
   if (!ind.orbHigh || !ind.orbLow) return null;
+
+  // VIX filter for ORB breakouts
+  if (ind.indiaVix && ind.indiaVix > 24) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  const volumeOk = (ind.lastCandle?.volume || 0) > avgVol * 0.9;
+  if (!volumeOk) return null;
 
   const orbRange = ind.orbHigh - ind.orbLow;
   const rangePercent = (orbRange / ind.spotPrice) * 100;
 
-  // Range should be meaningful but not extreme: 0.025% to 1.2%
-  if (rangePercent < 0.025 || rangePercent > 1.2) return null;
+  // Range should be meaningful but not extreme: 0.03% to 1.0%
+  if (rangePercent < 0.03 || rangePercent > 1.0) return null;
 
   if (ind.spotPrice > ind.orbHigh) {
     // Bullish breakout above ORB high
     const breakoutStrength = ((ind.spotPrice - ind.orbHigh) / orbRange);
-    // Reduced minimum breakout strength from 0.15 to 0.08 (8% instead of 15%)
-    if (breakoutStrength < 0.08) return null;
+    // Minimum breakout strength 10%
+    if (breakoutStrength < 0.10) return null;
 
-    // Relaxed candle requirement: just check if last candle is bullish or breakout is strong enough
     if (!ind.lastCandle) return null;
     if (ind.lastCandle.close < ind.orbHigh && breakoutStrength < 0.2) return null;
 
-    let confidence = 72;
-    // Increase confidence based on breakout strength
+    let confidence = 74;
+    // Breakout strength
     if (breakoutStrength > 0.15) confidence += 4;
     if (breakoutStrength > 0.25) confidence += 3;
-    if (breakoutStrength > 0.4) confidence += 2;
+    if (breakoutStrength > 0.4) confidence += 3;
     // EMA confirmation
-    if (ind.ema9 > ind.ema21) confidence += 3;
-    if (ind.ema9 > ind.vwap) confidence += 2;
+    if (ind.ema9 > ind.ema21) confidence += 4;
+    if (ind.ema9 > ind.vwap) confidence += 3;
     // Momentum confirmation
-    if (ind.rsi14 > 50) confidence += 2;
+    if (ind.rsi14 > 50) confidence += 3;
     if (ind.rsi14 > 60) confidence += 2;
-    if (ind.spotPrice > ind.vwap) confidence += 2;
+    if (ind.spotPrice > ind.vwap) confidence += 3;
     if (ind.supertrendBullish) confidence += 3;
     if (ind.momentum > 0.01) confidence += 2;
-    if (ind.lastCandle.close > ind.lastCandle.open) confidence += 2;
-    
+    if (ind.lastCandle.close > ind.lastCandle.open) confidence += 3;
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 3;
+
     return {
       direction: "CE",
       confidence: Math.min(95, confidence),
-      reason: `ORB bullish breakout above ${ind.orbHigh.toFixed(0)}, range ${rangePercent.toFixed(3)}%, strength ${(breakoutStrength * 100).toFixed(1)}%`,
+      reason: `ORB breakout ${ind.orbHigh.toFixed(0)}, range ${rangePercent.toFixed(2)}%, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}`,
       strikeOffset: 0,
-      riskPercent: 0.15,
+      riskPercent: 0.13,
     };
   }
 
   if (ind.spotPrice < ind.orbLow) {
     // Bearish breakdown below ORB low
     const breakoutStrength = ((ind.orbLow - ind.spotPrice) / orbRange);
-    // Reduced minimum breakout strength from 0.15 to 0.08 (8% instead of 15%)
-    if (breakoutStrength < 0.08) return null;
+    // Minimum breakout strength 10%
+    if (breakoutStrength < 0.10) return null;
 
-    // Relaxed candle requirement: just check if last candle is bearish or breakout is strong enough
     if (!ind.lastCandle) return null;
     if (ind.lastCandle.close > ind.orbLow && breakoutStrength < 0.2) return null;
 
-    let confidence = 72;
-    // Increase confidence based on breakout strength
+    let confidence = 74;
+    // Breakout strength
     if (breakoutStrength > 0.15) confidence += 4;
     if (breakoutStrength > 0.25) confidence += 3;
-    if (breakoutStrength > 0.4) confidence += 2;
+    if (breakoutStrength > 0.4) confidence += 3;
     // EMA confirmation
-    if (ind.ema9 < ind.ema21) confidence += 3;
-    if (ind.ema9 < ind.vwap) confidence += 2;
+    if (ind.ema9 < ind.ema21) confidence += 4;
+    if (ind.ema9 < ind.vwap) confidence += 3;
     // Momentum confirmation
-    if (ind.rsi14 < 50) confidence += 2;
+    if (ind.rsi14 < 50) confidence += 3;
     if (ind.rsi14 < 40) confidence += 2;
-    if (ind.spotPrice < ind.vwap) confidence += 2;
+    if (ind.spotPrice < ind.vwap) confidence += 3;
     if (!ind.supertrendBullish) confidence += 3;
     if (ind.momentum < -0.01) confidence += 2;
-    if (ind.lastCandle.close < ind.lastCandle.open) confidence += 2;
-    
+    if (ind.lastCandle.close < ind.lastCandle.open) confidence += 3;
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 3;
+
     return {
       direction: "PE",
       confidence: Math.min(95, confidence),
-      reason: `ORB bearish breakdown below ${ind.orbLow.toFixed(0)}, range ${rangePercent.toFixed(3)}%, strength ${(breakoutStrength * 100).toFixed(1)}%`,
+      reason: `ORB breakdown ${ind.orbLow.toFixed(0)}, range ${rangePercent.toFixed(2)}%, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}`,
       strikeOffset: 0,
-      riskPercent: 0.15,
+      riskPercent: 0.13,
     };
   }
 
@@ -898,6 +908,9 @@ function analyzeSMTR(ind: MarketIndicators, hour: number, minute: number): Strat
   if (hour < 9 || (hour === 9 && minute < 25)) return null;
   if (hour > 13 || (hour === 13 && minute > 45)) return null;
   if (!ind.orbHigh || !ind.orbLow) return null;
+
+  // VIX filter for trap reversals
+  if (ind.indiaVix && ind.indiaVix > 23) return null;
 
   const candles = ind.todayCandles.length >= 6 ? ind.todayCandles : ind.recentCandles;
   if (candles.length < 5) return null;
@@ -922,8 +935,9 @@ function analyzeSMTR(ind: MarketIndicators, hour: number, minute: number): Strat
   const oi = ind.oiSnapshot;
   if (!oi) return null;
 
-  const bullOiOk = oi.ceChangePct > 5 && oi.peChangePct >= -1 && oi.pcrShift <= -0.05;
-  const bearOiOk = oi.peChangePct > 5 && oi.ceChangePct >= -1 && oi.pcrShift >= 0.05;
+  // Stricter OI requirements
+  const bullOiOk = oi.ceChangePct > 7 && oi.peChangePct >= -1 && oi.pcrShift <= -0.06;
+  const bearOiOk = oi.peChangePct > 7 && oi.ceChangePct >= -1 && oi.pcrShift >= 0.06;
 
   const bullDeltaOk = breakVolHigh && prev1.close < prev1.open;
   const bearDeltaOk = breakVolHigh && prev1.close > prev1.open;
@@ -931,34 +945,38 @@ function analyzeSMTR(ind: MarketIndicators, hour: number, minute: number): Strat
   const useItm = hour > 13 || (hour === 13 && minute >= 30);
 
   if (bullTrapPrice && vwapReject && bullOiOk && bullDeltaOk) {
-    let confidence = 80;
+    let confidence = 82;
     if (breakVolHigh) confidence += 3;
     if (vwapReject) confidence += 3;
     if (oi.pcrShift <= -0.08) confidence += 3;
     if (prev1.close < prev1.open) confidence += 2;
+    // Volume confirmation
+    if ((last.volume || 0) > avgVol * 1.1) confidence += 2;
 
     return {
       direction: "PE",
       confidence: Math.min(95, confidence),
-      reason: `SMTR bull trap: ORH ${ind.orbHigh.toFixed(0)} failed 2-candle sustain, VWAP reject, CE OI +${oi.ceChangePct.toFixed(1)}%, PCR ${oi.pcrShift.toFixed(2)}`,
+      reason: `SMTR trap reversal ${ind.orbHigh.toFixed(0)}, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, CE OI +${oi.ceChangePct.toFixed(1)}%`,
       strikeOffset: useItm ? 1 : 0,
-      riskPercent: 0.16,
+      riskPercent: 0.13,
     };
   }
 
   if (bearTrapPrice && vwapReclaim && bearOiOk && bearDeltaOk) {
-    let confidence = 80;
+    let confidence = 82;
     if (breakVolHigh) confidence += 3;
     if (vwapReclaim) confidence += 3;
     if (oi.pcrShift >= 0.08) confidence += 3;
     if (prev1.close > prev1.open) confidence += 2;
+    // Volume confirmation
+    if ((last.volume || 0) > avgVol * 1.1) confidence += 2;
 
     return {
       direction: "CE",
       confidence: Math.min(95, confidence),
-      reason: `SMTR bear trap: ORL ${ind.orbLow.toFixed(0)} failed 2-candle sustain, VWAP reclaim, PE OI +${oi.peChangePct.toFixed(1)}%, PCR ${oi.pcrShift.toFixed(2)}`,
+      reason: `SMTR trap reversal ${ind.orbLow.toFixed(0)}, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, PE OI +${oi.peChangePct.toFixed(1)}%`,
       strikeOffset: useItm ? -1 : 0,
-      riskPercent: 0.16,
+      riskPercent: 0.13,
     };
   }
 
@@ -968,53 +986,67 @@ function analyzeSMTR(ind: MarketIndicators, hour: number, minute: number): Strat
 function analyzeEMA(ind: MarketIndicators): StrategySignalResult | null {
   if (ind.candleCount < 20) return null;
 
+  // VIX filter for trend following
+  if (ind.indiaVix && ind.indiaVix > 24) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  const volumeOk = (ind.lastCandle?.volume || 0) > avgVol * 0.8;
+  if (!volumeOk) return null;
+
   const emaGap = ((ind.ema9 - ind.ema21) / ind.ema21) * 100;
   const priceAboveEma9 = ind.spotPrice > ind.ema9;
   const priceAboveEma21 = ind.spotPrice > ind.ema21;
 
-  if (emaGap > 0.03 && priceAboveEma9) {
+  if (emaGap > 0.04 && priceAboveEma9) {
     if (!ind.lastCandle) return null;
 
-    let confidence = 70;
-    if (emaGap > 0.06) confidence += 3;
-    if (emaGap > 0.12) confidence += 2;
+    let confidence = 72;
+    if (emaGap > 0.08) confidence += 4;
+    if (emaGap > 0.15) confidence += 3;
     if (priceAboveEma21) confidence += 3;
-    if (ind.rsi14 > 50 && ind.rsi14 < 75) confidence += 3;
+    if (ind.rsi14 > 50 && ind.rsi14 < 72) confidence += 4;
     if (ind.spotPrice > ind.vwap) confidence += 3;
     if (ind.supertrendBullish) confidence += 3;
-    if (ind.momentum > 0.02) confidence += 2;
+    if (ind.momentum > 0.02) confidence += 3;
     if (ind.lastCandle.close > ind.lastCandle.open) confidence += 2;
     const recentBullish = ind.recentCandles.slice(-3).filter(c => c.close > c.open).length;
-    if (recentBullish >= 2) confidence += 2;
+    if (recentBullish >= 2) confidence += 3;
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 3;
+
     return {
       direction: "CE",
-      confidence: Math.min(93, confidence),
-      reason: `EMA9 ${ind.ema9.toFixed(0)} > EMA21 ${ind.ema21.toFixed(0)}, gap ${emaGap.toFixed(2)}%, price above EMA9`,
+      confidence: Math.min(95, confidence),
+      reason: `EMA trend ${emaGap.toFixed(2)}%, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, volume confirmed`,
       strikeOffset: 0,
-      riskPercent: 0.16,
+      riskPercent: 0.13,
     };
   }
 
-  if (emaGap < -0.03 && !priceAboveEma9) {
+  if (emaGap < -0.04 && !priceAboveEma9) {
     if (!ind.lastCandle) return null;
 
-    let confidence = 70;
-    if (Math.abs(emaGap) > 0.06) confidence += 3;
-    if (Math.abs(emaGap) > 0.12) confidence += 2;
+    let confidence = 72;
+    if (Math.abs(emaGap) > 0.08) confidence += 4;
+    if (Math.abs(emaGap) > 0.15) confidence += 3;
     if (!priceAboveEma21) confidence += 3;
-    if (ind.rsi14 < 50) confidence += 3;
+    if (ind.rsi14 < 50) confidence += 4;
     if (ind.spotPrice < ind.vwap) confidence += 3;
     if (!ind.supertrendBullish) confidence += 3;
-    if (ind.momentum < -0.02) confidence += 2;
+    if (ind.momentum < -0.02) confidence += 3;
     if (ind.lastCandle.close < ind.lastCandle.open) confidence += 2;
     const recentBearish = ind.recentCandles.slice(-3).filter(c => c.close < c.open).length;
-    if (recentBearish >= 2) confidence += 2;
+    if (recentBearish >= 2) confidence += 3;
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 3;
+
     return {
       direction: "PE",
-      confidence: Math.min(93, confidence),
-      reason: `EMA9 ${ind.ema9.toFixed(0)} < EMA21 ${ind.ema21.toFixed(0)}, gap ${Math.abs(emaGap).toFixed(2)}%, price below EMA9`,
+      confidence: Math.min(95, confidence),
+      reason: `EMA trend ${Math.abs(emaGap).toFixed(2)}%, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, volume confirmed`,
       strikeOffset: 0,
-      riskPercent: 0.16,
+      riskPercent: 0.13,
     };
   }
 
@@ -1122,47 +1154,89 @@ function analyzeRSI(ind: MarketIndicators): StrategySignalResult | null {
   if (ind.candleCount < 15) return null;
   if (!ind.lastCandle) return null;
 
+  // CRITICAL: VIX filter for reversal safety
+  if (ind.indiaVix && ind.indiaVix > 22) return null;
+
+  // Volume confirmation - must have decent volume
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  const volumeOk = (ind.lastCandle.volume || 0) > avgVol * 0.8;
+  if (!volumeOk) return null;
+
+  // Trend confirmation for safer reversals
+  const trendBullish = ind.ema9 > ind.ema21 && ind.ema21 > ind.ema50;
+  const trendBearish = ind.ema9 < ind.ema21 && ind.ema21 < ind.ema50;
+
   if (ind.rsi14 <= 30) {
-    let confidence = 70;
-    if (ind.rsi14 <= 25) confidence += 3;
+    // Only long in established uptrend or neutral market
+    if (trendBearish && ind.rsi14 > 25) return null;
+
+    let confidence = 73;
+    if (ind.rsi14 <= 25) confidence += 4;
     if (ind.rsi14 <= 20) confidence += 3;
     if (ind.spotPrice <= ind.dayLow * 1.003) confidence += 3;
-    if (ind.lastCandle.close > ind.lastCandle.open) confidence += 3;
+    if (ind.lastCandle.close > ind.lastCandle.open) confidence += 4;
     if (ind.spotPrice > ind.dayLow) confidence += 2;
-    if (ind.momentum > -0.1) confidence += 2;
+    if (ind.momentum > -0.1) confidence += 3;
+
+    // Enhanced wick analysis
     const candleRange = ind.lastCandle.high - ind.lastCandle.low;
     if (candleRange > 0) {
       const lowerWick = Math.min(ind.lastCandle.open, ind.lastCandle.close) - ind.lastCandle.low;
-      if (lowerWick / candleRange > 0.3) confidence += 2;
+      const wickRatio = lowerWick / candleRange;
+      if (wickRatio > 0.3) confidence += 3;
+      if (wickRatio > 0.5) confidence += 2;
     }
+
+    // Trend alignment bonus
+    if (trendBullish) confidence += 4;
+    if (ind.spotPrice > ind.vwap) confidence += 3;
+
+    // Volume surge confirmation
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.3) confidence += 3;
+
     return {
       direction: "CE",
-      confidence: Math.min(93, confidence),
-      reason: `RSI oversold at ${ind.rsi14.toFixed(1)}, reversal opportunity near day low ${ind.dayLow.toFixed(0)}`,
+      confidence: Math.min(95, confidence),
+      reason: `RSI oversold reversal at ${ind.rsi14.toFixed(1)}, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, volume confirmed`,
       strikeOffset: 0,
-      riskPercent: 0.18,
+      riskPercent: 0.12,
     };
   }
 
   if (ind.rsi14 >= 70) {
-    let confidence = 70;
-    if (ind.rsi14 >= 75) confidence += 3;
+    // Only short in established downtrend or neutral market
+    if (trendBullish && ind.rsi14 < 75) return null;
+
+    let confidence = 73;
+    if (ind.rsi14 >= 75) confidence += 4;
     if (ind.rsi14 >= 80) confidence += 3;
     if (ind.spotPrice >= ind.dayHigh * 0.997) confidence += 3;
-    if (ind.lastCandle.close < ind.lastCandle.open) confidence += 3;
+    if (ind.lastCandle.close < ind.lastCandle.open) confidence += 4;
     if (ind.spotPrice < ind.dayHigh) confidence += 2;
-    if (ind.momentum < 0.1) confidence += 2;
+    if (ind.momentum < 0.1) confidence += 3;
+
+    // Enhanced wick analysis
     const candleRange = ind.lastCandle.high - ind.lastCandle.low;
     if (candleRange > 0) {
       const upperWick = ind.lastCandle.high - Math.max(ind.lastCandle.open, ind.lastCandle.close);
-      if (upperWick / candleRange > 0.3) confidence += 2;
+      const wickRatio = upperWick / candleRange;
+      if (wickRatio > 0.3) confidence += 3;
+      if (wickRatio > 0.5) confidence += 2;
     }
+
+    // Trend alignment bonus
+    if (trendBearish) confidence += 4;
+    if (ind.spotPrice < ind.vwap) confidence += 3;
+
+    // Volume surge confirmation
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.3) confidence += 3;
+
     return {
       direction: "PE",
-      confidence: Math.min(93, confidence),
-      reason: `RSI overbought at ${ind.rsi14.toFixed(1)}, reversal opportunity near day high ${ind.dayHigh.toFixed(0)}`,
+      confidence: Math.min(95, confidence),
+      reason: `RSI overbought reversal at ${ind.rsi14.toFixed(1)}, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, volume confirmed`,
       strikeOffset: 0,
-      riskPercent: 0.18,
+      riskPercent: 0.12,
     };
   }
 
@@ -1172,6 +1246,14 @@ function analyzeRSI(ind: MarketIndicators): StrategySignalResult | null {
 function analyzeRSIRange(ind: MarketIndicators): StrategySignalResult | null {
   if (ind.candleCount < 15) return null;
   if (!ind.lastCandle) return null;
+
+  // VIX filter for range trading
+  if (ind.indiaVix && ind.indiaVix > 21) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  const volumeOk = (ind.lastCandle.volume || 0) > avgVol * 0.7;
+  if (!volumeOk) return null;
 
   const dayRange = ind.dayHigh - ind.dayLow;
   if (dayRange <= 0) return null;
@@ -1191,28 +1273,34 @@ function analyzeRSIRange(ind: MarketIndicators): StrategySignalResult | null {
   const wickHeavy = candleRange > 0 && (candleRange - candleBody) / candleRange > 0.45;
 
   if (ind.rsi14 <= 38 && ind.lastCandle.close > ind.lastCandle.open && wickHeavy) {
-    let confidence = 72;
+    let confidence = 74;
     if (ind.rsi14 <= 34) confidence += 3;
     if (ind.spotPrice >= ind.vwap) confidence += 3;
-    if (distanceFromMidPct < 0.25) confidence += 2;
+    if (distanceFromMidPct < 0.25) confidence += 3;
+    // Trend alignment
+    if (ind.ema9 > ind.ema21) confidence += 3;
+
     return {
       direction: "CE",
-      confidence: Math.min(90, confidence),
-      reason: `RSI range buy: RSI ${ind.rsi14.toFixed(1)}, range ${rangePct.toFixed(2)}%, VWAP mean-reversion setup`,
+      confidence: Math.min(92, confidence),
+      reason: `RSI range ${ind.rsi14.toFixed(1)}, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, mean-reversion`,
       strikeOffset: 0,
       riskPercent: 0.12,
     };
   }
 
   if (ind.rsi14 >= 62 && ind.lastCandle.close < ind.lastCandle.open && wickHeavy) {
-    let confidence = 72;
+    let confidence = 74;
     if (ind.rsi14 >= 66) confidence += 3;
     if (ind.spotPrice <= ind.vwap) confidence += 3;
-    if (distanceFromMidPct < 0.25) confidence += 2;
+    if (distanceFromMidPct < 0.25) confidence += 3;
+    // Trend alignment
+    if (ind.ema9 < ind.ema21) confidence += 3;
+
     return {
       direction: "PE",
-      confidence: Math.min(90, confidence),
-      reason: `RSI range sell: RSI ${ind.rsi14.toFixed(1)}, range ${rangePct.toFixed(2)}%, VWAP mean-reversion setup`,
+      confidence: Math.min(92, confidence),
+      reason: `RSI range ${ind.rsi14.toFixed(1)}, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, mean-reversion`,
       strikeOffset: 0,
       riskPercent: 0.12,
     };
@@ -1225,45 +1313,59 @@ function analyzeSupertrend(ind: MarketIndicators): StrategySignalResult | null {
   if (ind.candleCount < 15) return null;
   if (!ind.lastCandle) return null;
 
+  // VIX filter
+  if (ind.indiaVix && ind.indiaVix > 24) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  const volumeOk = (ind.lastCandle.volume || 0) > avgVol * 0.8;
+  if (!volumeOk) return null;
+
   const priceAboveST = ind.spotPrice > ind.supertrend;
 
   if (ind.supertrendBullish && priceAboveST) {
-    let confidence = 70;
-    if (ind.ema9 > ind.ema21) confidence += 3;
-    if (ind.rsi14 > 45) confidence += 3;
+    let confidence = 73;
+    if (ind.ema9 > ind.ema21) confidence += 4;
+    if (ind.rsi14 > 45 && ind.rsi14 < 72) confidence += 3;
     if (ind.spotPrice > ind.vwap) confidence += 3;
-    if (ind.momentum > 0) confidence += 2;
+    if (ind.momentum > 0) confidence += 3;
     if (ind.lastCandle.close > ind.lastCandle.open) confidence += 3;
     const recentBullish = ind.recentCandles.slice(-3).filter(c => c.close > c.open).length;
-    if (recentBullish >= 2) confidence += 2;
+    if (recentBullish >= 2) confidence += 3;
     const stDistance = ((ind.spotPrice - ind.supertrend) / ind.supertrend) * 100;
-    if (stDistance < 0.2) confidence += 2;
+    if (stDistance < 0.2) confidence += 3;
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 3;
+
     return {
       direction: "CE",
-      confidence: Math.min(93, confidence),
-      reason: `Supertrend bullish at ${ind.supertrend.toFixed(0)}, price above ST, RSI ${ind.rsi14.toFixed(0)}`,
+      confidence: Math.min(95, confidence),
+      reason: `Supertrend bullish ${ind.supertrend.toFixed(0)}, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}`,
       strikeOffset: 0,
-      riskPercent: 0.16,
+      riskPercent: 0.13,
     };
   }
 
   if (!ind.supertrendBullish && !priceAboveST) {
-    let confidence = 70;
-    if (ind.ema9 < ind.ema21) confidence += 3;
-    if (ind.rsi14 < 55) confidence += 3;
+    let confidence = 73;
+    if (ind.ema9 < ind.ema21) confidence += 4;
+    if (ind.rsi14 < 55 && ind.rsi14 > 28) confidence += 3;
     if (ind.spotPrice < ind.vwap) confidence += 3;
-    if (ind.momentum < 0) confidence += 2;
+    if (ind.momentum < 0) confidence += 3;
     if (ind.lastCandle.close < ind.lastCandle.open) confidence += 3;
     const recentBearish = ind.recentCandles.slice(-3).filter(c => c.close < c.open).length;
-    if (recentBearish >= 2) confidence += 2;
+    if (recentBearish >= 2) confidence += 3;
     const stDistance = ((ind.supertrend - ind.spotPrice) / ind.supertrend) * 100;
-    if (stDistance < 0.2) confidence += 2;
+    if (stDistance < 0.2) confidence += 3;
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 3;
+
     return {
       direction: "PE",
-      confidence: Math.min(93, confidence),
-      reason: `Supertrend bearish at ${ind.supertrend.toFixed(0)}, price below ST, RSI ${ind.rsi14.toFixed(0)}`,
+      confidence: Math.min(95, confidence),
+      reason: `Supertrend bearish ${ind.supertrend.toFixed(0)}, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}`,
       strikeOffset: 0,
-      riskPercent: 0.16,
+      riskPercent: 0.13,
     };
   }
 
@@ -1274,51 +1376,61 @@ function analyzeTripleConfluence(ind: MarketIndicators): StrategySignalResult | 
   if (ind.candleCount < 15) return null;
   if (!ind.lastCandle) return null;
 
+  // VIX filter
+  if (ind.indiaVix && ind.indiaVix > 24) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  const volumeOk = (ind.lastCandle.volume || 0) > avgVol * 0.8;
+  if (!volumeOk) return null;
+
   const emaGap = ((ind.ema9 - ind.ema21) / ind.ema21) * 100;
-  const emaBullish = emaGap > 0.02 && ind.spotPrice > ind.ema9;
-  const emaBearish = emaGap < -0.02 && ind.spotPrice < ind.ema9;
+  const emaBullish = emaGap > 0.03 && ind.spotPrice > ind.ema9;
+  const emaBearish = emaGap < -0.03 && ind.spotPrice < ind.ema9;
   const vwapBullish = ind.spotPrice > ind.vwap;
   const vwapBearish = ind.spotPrice < ind.vwap;
-  const rsiBullish = ind.rsi14 > 50;
-  const rsiBearish = ind.rsi14 < 50;
-
-  let alignedCount = 0;
+  const rsiBullish = ind.rsi14 > 52;
+  const rsiBearish = ind.rsi14 < 48;
 
   if (emaBullish && vwapBullish && rsiBullish) {
-    alignedCount = 3;
-    let confidence = 75;
+    let confidence = 77;
     if (ind.supertrendBullish) confidence += 3;
-    if (ind.momentum > 0.02) confidence += 2;
-    if (Math.abs(emaGap) > 0.06) confidence += 2;
-    if (ind.rsi14 > 55 && ind.rsi14 < 72) confidence += 2;
+    if (ind.momentum > 0.02) confidence += 3;
+    if (Math.abs(emaGap) > 0.08) confidence += 3;
+    if (ind.rsi14 > 55 && ind.rsi14 < 70) confidence += 3;
     if (ind.lastCandle.close > ind.lastCandle.open) confidence += 2;
     const recentBullish = ind.recentCandles.slice(-3).filter(c => c.close > c.open).length;
-    if (recentBullish >= 2) confidence += 2;
+    if (recentBullish >= 2) confidence += 3;
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 3;
+
     return {
       direction: "CE",
       confidence: Math.min(95, confidence),
-      reason: `Triple confluence bullish: EMA(${emaGap.toFixed(2)}%) + VWAP(${ind.vwap.toFixed(0)}) + RSI(${ind.rsi14.toFixed(0)}) aligned`,
+      reason: `Triple confluence ${emaGap.toFixed(2)}%, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}`,
       strikeOffset: 0,
-      riskPercent: 0.15,
+      riskPercent: 0.13,
     };
   }
 
   if (emaBearish && vwapBearish && rsiBearish) {
-    alignedCount = 3;
-    let confidence = 75;
+    let confidence = 77;
     if (!ind.supertrendBullish) confidence += 3;
-    if (ind.momentum < -0.02) confidence += 2;
-    if (Math.abs(emaGap) > 0.06) confidence += 2;
-    if (ind.rsi14 < 45) confidence += 2;
+    if (ind.momentum < -0.02) confidence += 3;
+    if (Math.abs(emaGap) > 0.08) confidence += 3;
+    if (ind.rsi14 < 45 && ind.rsi14 > 30) confidence += 3;
     if (ind.lastCandle.close < ind.lastCandle.open) confidence += 2;
     const recentBearish = ind.recentCandles.slice(-3).filter(c => c.close < c.open).length;
-    if (recentBearish >= 2) confidence += 2;
+    if (recentBearish >= 2) confidence += 3;
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 3;
+
     return {
       direction: "PE",
       confidence: Math.min(95, confidence),
-      reason: `Triple confluence bearish: EMA(${Math.abs(emaGap).toFixed(2)}%) + VWAP(${ind.vwap.toFixed(0)}) + RSI(${ind.rsi14.toFixed(0)}) aligned`,
+      reason: `Triple confluence ${Math.abs(emaGap).toFixed(2)}%, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}`,
       strikeOffset: 0,
-      riskPercent: 0.15,
+      riskPercent: 0.13,
     };
   }
 
@@ -1329,54 +1441,94 @@ function analyzeMarketTop(ind: MarketIndicators): StrategySignalResult | null {
   if (ind.candleCount < 15) return null;
   if (!ind.lastCandle) return null;
 
+  // CRITICAL: VIX filter for reversal trades
+  if (ind.indiaVix && ind.indiaVix > 23) return null;
+
+  // Volume surge required for reversal confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  const volumeSurge = (ind.lastCandle.volume || 0) > avgVol * 1.2;
+  if (!volumeSurge) return null;
+
   const dayRange = ind.dayHigh - ind.dayLow;
   if (dayRange < ind.spotPrice * 0.001) return null;
 
   const positionInRange = dayRange > 0 ? ((ind.spotPrice - ind.dayLow) / dayRange) * 100 : 50;
 
-  if (positionInRange > 85 && ind.rsi14 > 65) {
-    let confidence = 72;
-    if (ind.rsi14 > 70) confidence += 2;
-    if (ind.rsi14 > 75) confidence += 2;
-    if (ind.rsi14 > 80) confidence += 2;
-    if (ind.lastCandle.close < ind.lastCandle.open) confidence += 3;
-    if (!ind.supertrendBullish) confidence += 2;
-    if (ind.ema9 < ind.ema21) confidence += 2;
-    if (ind.momentum < 0.05) confidence += 2;
+  if (positionInRange > 85 && ind.rsi14 > 68) {
+    // Stricter entry at market top
+    let confidence = 75;
+    if (ind.rsi14 > 72) confidence += 3;
+    if (ind.rsi14 > 76) confidence += 3;
+    if (ind.rsi14 > 80) confidence += 3;
+    if (ind.lastCandle.close < ind.lastCandle.open) confidence += 4;
+    if (!ind.supertrendBullish) confidence += 3;
+    if (ind.ema9 < ind.ema21) confidence += 3;
+    if (ind.momentum < 0.05) confidence += 3;
+
+    // Enhanced wick analysis
     const candleRange = ind.lastCandle.high - ind.lastCandle.low;
     if (candleRange > 0) {
       const upperWick = ind.lastCandle.high - Math.max(ind.lastCandle.open, ind.lastCandle.close);
-      if (upperWick / candleRange > 0.25) confidence += 2;
+      const wickRatio = upperWick / candleRange;
+      if (wickRatio > 0.25) confidence += 3;
+      if (wickRatio > 0.4) confidence += 3;
     }
+
+    // Volume confirmation
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.5) confidence += 3;
+
+    // Multiple bearish candles
+    const recentBearish = ind.recentCandles.slice(-3).filter(c => c.close < c.open).length;
+    if (recentBearish >= 2) confidence += 2;
+
+    // Must have high confidence for reversal
+    if (confidence < 85) return null;
+
     return {
       direction: "PE",
-      confidence: Math.min(93, confidence),
-      reason: `Market top reversal: RSI ${ind.rsi14.toFixed(0)}, price at ${positionInRange.toFixed(0)}% of day range near high ${ind.dayHigh.toFixed(0)}`,
+      confidence: Math.min(95, confidence),
+      reason: `Market top reversal: RSI ${ind.rsi14.toFixed(0)}, ${positionInRange.toFixed(0)}% range, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}`,
       strikeOffset: 0,
-      riskPercent: 0.18,
+      riskPercent: 0.13,
     };
   }
 
-  if (positionInRange < 15 && ind.rsi14 < 35) {
-    let confidence = 72;
-    if (ind.rsi14 < 30) confidence += 2;
-    if (ind.rsi14 < 25) confidence += 2;
-    if (ind.rsi14 < 20) confidence += 2;
-    if (ind.lastCandle.close > ind.lastCandle.open) confidence += 3;
-    if (ind.supertrendBullish) confidence += 2;
-    if (ind.ema9 > ind.ema21) confidence += 2;
-    if (ind.momentum > -0.05) confidence += 2;
+  if (positionInRange < 15 && ind.rsi14 < 32) {
+    // Stricter entry at market bottom
+    let confidence = 75;
+    if (ind.rsi14 < 28) confidence += 3;
+    if (ind.rsi14 < 24) confidence += 3;
+    if (ind.rsi14 < 20) confidence += 3;
+    if (ind.lastCandle.close > ind.lastCandle.open) confidence += 4;
+    if (ind.supertrendBullish) confidence += 3;
+    if (ind.ema9 > ind.ema21) confidence += 3;
+    if (ind.momentum > -0.05) confidence += 3;
+
+    // Enhanced wick analysis
     const candleRange = ind.lastCandle.high - ind.lastCandle.low;
     if (candleRange > 0) {
       const lowerWick = Math.min(ind.lastCandle.open, ind.lastCandle.close) - ind.lastCandle.low;
-      if (lowerWick / candleRange > 0.25) confidence += 2;
+      const wickRatio = lowerWick / candleRange;
+      if (wickRatio > 0.25) confidence += 3;
+      if (wickRatio > 0.4) confidence += 3;
     }
+
+    // Volume confirmation
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.5) confidence += 3;
+
+    // Multiple bullish candles
+    const recentBullish = ind.recentCandles.slice(-3).filter(c => c.close > c.open).length;
+    if (recentBullish >= 2) confidence += 2;
+
+    // Must have high confidence for reversal
+    if (confidence < 85) return null;
+
     return {
       direction: "CE",
-      confidence: Math.min(93, confidence),
-      reason: `Market bottom reversal: RSI ${ind.rsi14.toFixed(0)}, price at ${positionInRange.toFixed(0)}% of day range near low ${ind.dayLow.toFixed(0)}`,
+      confidence: Math.min(95, confidence),
+      reason: `Market bottom reversal: RSI ${ind.rsi14.toFixed(0)}, ${positionInRange.toFixed(0)}% range, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}`,
       strikeOffset: 0,
-      riskPercent: 0.18,
+      riskPercent: 0.13,
     };
   }
 
@@ -1387,51 +1539,65 @@ function analyzeScalp(ind: MarketIndicators): StrategySignalResult | null {
   if (ind.candleCount < 10) return null;
   if (!ind.lastCandle) return null;
 
+  // VIX filter - scalping needs low volatility
+  if (ind.indiaVix && ind.indiaVix > 20) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  const volumeOk = (ind.lastCandle.volume || 0) > avgVol * 0.9;
+  if (!volumeOk) return null;
+
   const lastBody = Math.abs(ind.lastCandle.close - ind.lastCandle.open);
   const lastRange = ind.lastCandle.high - ind.lastCandle.low;
 
-  if (lastBody < ind.atr14 * 0.3) return null;
+  if (lastBody < ind.atr14 * 0.35) return null;
   if (lastRange === 0) return null;
 
   const bodyRatio = lastBody / lastRange;
-  const bullishCandle = ind.lastCandle.close > ind.lastCandle.open && bodyRatio > 0.5;
-  const bearishCandle = ind.lastCandle.close < ind.lastCandle.open && bodyRatio > 0.5;
+  const bullishCandle = ind.lastCandle.close > ind.lastCandle.open && bodyRatio > 0.55;
+  const bearishCandle = ind.lastCandle.close < ind.lastCandle.open && bodyRatio > 0.55;
 
-  if (bullishCandle && ind.rsi14 > 40) {
-    let confidence = 70;
+  if (bullishCandle && ind.rsi14 > 42 && ind.rsi14 < 75) {
+    let confidence = 73;
     if (ind.momentum > 0.02) confidence += 3;
     if (ind.spotPrice > ind.vwap) confidence += 3;
     if (ind.ema9 > ind.ema21) confidence += 3;
-    if (ind.supertrendBullish) confidence += 2;
-    if (lastBody > ind.atr14 * 0.5) confidence += 2;
-    if (bodyRatio > 0.7) confidence += 2;
+    if (ind.supertrendBullish) confidence += 3;
+    if (lastBody > ind.atr14 * 0.5) confidence += 3;
+    if (bodyRatio > 0.7) confidence += 3;
     const recentBullish = ind.recentCandles.slice(-3).filter(c => c.close > c.open).length;
-    if (recentBullish >= 2) confidence += 2;
+    if (recentBullish >= 2) confidence += 3;
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 3;
+
     return {
       direction: "CE",
-      confidence: Math.min(93, confidence),
-      reason: `Scalp bullish: body ${lastBody.toFixed(0)}pts (${(lastBody/ind.atr14*100).toFixed(0)}% ATR), body ratio ${(bodyRatio*100).toFixed(0)}%`,
+      confidence: Math.min(95, confidence),
+      reason: `Scalp momentum, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, ${(bodyRatio*100).toFixed(0)}% body`,
       strikeOffset: 0,
-      riskPercent: 0.14,
+      riskPercent: 0.12,
     };
   }
 
-  if (bearishCandle && ind.rsi14 < 60) {
-    let confidence = 70;
+  if (bearishCandle && ind.rsi14 < 58 && ind.rsi14 > 25) {
+    let confidence = 73;
     if (ind.momentum < -0.02) confidence += 3;
     if (ind.spotPrice < ind.vwap) confidence += 3;
     if (ind.ema9 < ind.ema21) confidence += 3;
-    if (!ind.supertrendBullish) confidence += 2;
-    if (lastBody > ind.atr14 * 0.5) confidence += 2;
-    if (bodyRatio > 0.7) confidence += 2;
+    if (!ind.supertrendBullish) confidence += 3;
+    if (lastBody > ind.atr14 * 0.5) confidence += 3;
+    if (bodyRatio > 0.7) confidence += 3;
     const recentBearish = ind.recentCandles.slice(-3).filter(c => c.close < c.open).length;
-    if (recentBearish >= 2) confidence += 2;
+    if (recentBearish >= 2) confidence += 3;
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 3;
+
     return {
       direction: "PE",
-      confidence: Math.min(93, confidence),
-      reason: `Scalp bearish: body ${lastBody.toFixed(0)}pts (${(lastBody/ind.atr14*100).toFixed(0)}% ATR), body ratio ${(bodyRatio*100).toFixed(0)}%`,
+      confidence: Math.min(95, confidence),
+      reason: `Scalp momentum, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, ${(bodyRatio*100).toFixed(0)}% body`,
       strikeOffset: 0,
-      riskPercent: 0.14,
+      riskPercent: 0.12,
     };
   }
 
@@ -1482,19 +1648,27 @@ function analyzeAfternoonVwapMomentum(ind: MarketIndicators, hour: number, minut
   const timeInMinutes = hour * 60 + minute;
   const startTime = 13 * 60 + 45;
   const endTime = 15 * 60 + 10;
-  
+
   if (timeInMinutes < startTime || timeInMinutes > endTime) {
     return null;
   }
+
+  // VIX filter - afternoon needs lower volatility
+  if (ind.indiaVix && ind.indiaVix > 19) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  const volumeOk = (ind.lastCandle?.volume || 0) > avgVol * 0.9;
+  if (!volumeOk) return null;
 
   if (ind.candleCount < 2 || !ind.lastCandle || !ind.prevCandle) {
     return null;
   }
 
   // Check for two consecutive candles pattern
-  const lastTwoBullish = ind.lastCandle.close > ind.lastCandle.open && 
+  const lastTwoBullish = ind.lastCandle.close > ind.lastCandle.open &&
                           ind.prevCandle.close > ind.prevCandle.open;
-  const lastTwoBearish = ind.lastCandle.close < ind.lastCandle.open && 
+  const lastTwoBearish = ind.lastCandle.close < ind.lastCandle.open &&
                           ind.prevCandle.close < ind.prevCandle.open;
 
   // Current candle range
@@ -1502,45 +1676,47 @@ function analyzeAfternoonVwapMomentum(ind: MarketIndicators, hour: number, minut
   const atrExpansion = currentRange > (ind.atr14 * 1.2);
 
   // BEARISH Setup (PE BUY)
-  if (ind.spotPrice < ind.vwap && 
-      ind.ema9 < ind.ema21 && 
-      lastTwoBearish && 
+  if (ind.spotPrice < ind.vwap &&
+      ind.ema9 < ind.ema21 &&
+      lastTwoBearish &&
       ind.lastCandle.low < ind.dayLow &&
       atrExpansion) {
-    
-    let confidence = 65;
+
+    let confidence = 68;
     if (atrExpansion) confidence += 5;
     if (ind.momentum < -0.03) confidence += 5;
     if (ind.spotPrice < ind.vwap * 0.995) confidence += 5;
-    
-    // Note: Full implementation would validate option premium data here
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 4;
+
     return {
       direction: "PE",
-      confidence: Math.min(80, confidence),
-      reason: `PM bearish breakdown: Day low ${ind.dayLow.toFixed(0)} broken at ${ind.spotPrice.toFixed(0)}, range ${currentRange.toFixed(0)} > 1.2×ATR`,
-      strikeOffset: 0, // ATM
+      confidence: Math.min(85, confidence),
+      reason: `Afternoon momentum, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, day low break`,
+      strikeOffset: 0,
       riskPercent: 0.12,
     };
   }
 
   // BULLISH Setup (CE BUY)
-  if (ind.spotPrice > ind.vwap && 
-      ind.ema9 > ind.ema21 && 
-      lastTwoBullish && 
+  if (ind.spotPrice > ind.vwap &&
+      ind.ema9 > ind.ema21 &&
+      lastTwoBullish &&
       ind.lastCandle.high > ind.dayHigh &&
       atrExpansion) {
-    
-    let confidence = 65;
+
+    let confidence = 68;
     if (atrExpansion) confidence += 5;
     if (ind.momentum > 0.03) confidence += 5;
     if (ind.spotPrice > ind.vwap * 1.005) confidence += 5;
-    
-    // Note: Full implementation would validate option premium data here
+    // Volume surge
+    if ((ind.lastCandle.volume || 0) > avgVol * 1.2) confidence += 4;
+
     return {
       direction: "CE",
-      confidence: Math.min(80, confidence),
-      reason: `PM bullish breakout: Day high ${ind.dayHigh.toFixed(0)} broken at ${ind.spotPrice.toFixed(0)}, range ${currentRange.toFixed(0)} > 1.2×ATR`,
-      strikeOffset: 0, // ATM
+      confidence: Math.min(85, confidence),
+      reason: `Afternoon momentum, VIX ${ind.indiaVix?.toFixed(1) || 'N/A'}, day high break`,
+      strikeOffset: 0,
       riskPercent: 0.12,
     };
   }
@@ -1552,6 +1728,13 @@ function analyzeGapFade(ind: MarketIndicators, hour: number, minute: number): St
   if (hour < 9 || (hour === 9 && minute < 20)) return null;
   if (hour > 10 || (hour === 10 && minute > 45)) return null;
   if (!ind.lastCandle || !ind.prevCandle) return null;
+
+  // VIX filter for gap trades
+  if (ind.indiaVix && ind.indiaVix > 23) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  if ((ind.lastCandle.volume || 0) < avgVol * 0.8) return null;
 
   const gapPct = ((ind.dayOpen - ind.prevClose) / ind.prevClose) * 100;
   const absGap = Math.abs(gapPct);
@@ -1603,6 +1786,13 @@ function analyzeGapFade(ind: MarketIndicators, hour: number, minute: number): St
 function analyzeCPR(ind: MarketIndicators): StrategySignalResult | null {
   if (ind.candleCount < 15 || !ind.lastCandle) return null;
 
+  // VIX filter
+  if (ind.indiaVix && ind.indiaVix > 23) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  if ((ind.lastCandle.volume || 0) < avgVol * 0.8) return null;
+
   const pivot = (ind.prevClose + ind.dayOpen + ind.spotPrice) / 3;
   const cprWidthPct = (Math.abs(ind.dayOpen - ind.prevClose) / ind.spotPrice) * 100;
   const narrowCPR = cprWidthPct <= 0.35;
@@ -1644,6 +1834,13 @@ function analyzeCPR(ind: MarketIndicators): StrategySignalResult | null {
 
 function analyzeInsideCandle(ind: MarketIndicators): StrategySignalResult | null {
   if (ind.candleCount < 8 || !ind.lastCandle || !ind.prevCandle) return null;
+
+  // VIX filter
+  if (ind.indiaVix && ind.indiaVix > 23) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  if ((ind.lastCandle.volume || 0) < avgVol * 0.7) return null;
 
   const inside = ind.lastCandle.high <= ind.prevCandle.high && ind.lastCandle.low >= ind.prevCandle.low;
   if (!inside) return null;
@@ -1688,6 +1885,13 @@ function analyzeInsideCandle(ind: MarketIndicators): StrategySignalResult | null
 function analyzeProORB(ind: MarketIndicators, hour: number, minute: number): StrategySignalResult | null {
   if (hour < 9 || (hour === 9 && minute < 25) || hour > 11) return null;
   if (!ind.orbHigh || !ind.orbLow || !ind.lastCandle) return null;
+
+  // VIX filter
+  if (ind.indiaVix && ind.indiaVix > 24) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  if ((ind.lastCandle.volume || 0) < avgVol * 0.9) return null;
 
   const orbRange = ind.orbHigh - ind.orbLow;
   if (orbRange <= 0) return null;
@@ -1833,6 +2037,13 @@ function analyzeBreakoutStrength(ind: MarketIndicators): StrategySignalResult | 
 
 function analyzeRegimeBased(ind: MarketIndicators): StrategySignalResult | null {
   if (ind.candleCount < 20 || !ind.lastCandle) return null;
+
+  // VIX filter
+  if (ind.indiaVix && ind.indiaVix > 24) return null;
+
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  if ((ind.lastCandle.volume || 0) < avgVol * 0.8) return null;
 
   const dayRangePct = ((ind.dayHigh - ind.dayLow) / ind.spotPrice) * 100;
   const emaGapPct = Math.abs((ind.ema9 - ind.ema21) / ind.ema21) * 100;
