@@ -237,11 +237,14 @@ function getLiveCandleData(instrument: string): LiveCandle[] {
 }
 
 const strategyCooldown: Map<string, number> = new Map();
+const strategyConsecutiveLosses: Map<string, number> = new Map();
+const strategyDisabledUntil: Map<string, number> = new Map();
+
 const COOLDOWN_MS: Record<string, number> = {
   ORB: 30 * 60000,
   SMTR: 20 * 60000,
   EMA: 20 * 60000,
-  VWAP_PULLBACK: 15 * 60000,
+  VWAP_PULLBACK: 20 * 60000, // Increased cooldown
   RSI: 15 * 60000,
   VWAP_RSI: 20 * 60000,
   RSI_RANGE: 15 * 60000,
@@ -258,6 +261,10 @@ const COOLDOWN_MS: Record<string, number> = {
   EMA_PULLBACK: 10 * 60000,
   AFTERNOON_VWAP_MOMENTUM: 10 * 60000,
 };
+
+// Circuit breaker: disable strategy after too many consecutive losses
+const MAX_CONSECUTIVE_LOSSES = 3;
+const CIRCUIT_BREAKER_DURATION_MS = 60 * 60000; // 1 hour
 
 const ACTIVE_STRATEGIES: StrategyKey[] = [
   "ORB",
@@ -766,6 +773,43 @@ function isOnCooldown(strategy: string): boolean {
   return Date.now() - lastTime < cooldown;
 }
 
+function isStrategyDisabled(strategy: string): boolean {
+  const disabledUntil = strategyDisabledUntil.get(strategy);
+  if (!disabledUntil) return false;
+
+  if (Date.now() < disabledUntil) {
+    return true;
+  }
+
+  // Re-enable strategy
+  strategyDisabledUntil.delete(strategy);
+  strategyConsecutiveLosses.set(strategy, 0);
+  log(`Strategy ${strategy} circuit breaker reset - re-enabled`, "circuit-breaker");
+  return false;
+}
+
+async function trackStrategyResult(strategy: string, isWin: boolean) {
+  if (isWin) {
+    strategyConsecutiveLosses.set(strategy, 0);
+  } else {
+    const losses = (strategyConsecutiveLosses.get(strategy) || 0) + 1;
+    strategyConsecutiveLosses.set(strategy, losses);
+
+    if (losses >= MAX_CONSECUTIVE_LOSSES) {
+      const disableUntil = Date.now() + CIRCUIT_BREAKER_DURATION_MS;
+      strategyDisabledUntil.set(strategy, disableUntil);
+
+      const disableTime = new Date(disableUntil);
+      await storage.createLog({
+        level: "warn",
+        source: "circuit-breaker",
+        message: `Strategy ${strategy} disabled until ${formatISTClock(disableTime)} after ${losses} consecutive losses`
+      });
+      log(`🛑 Circuit breaker activated for ${strategy} - disabled for 1 hour`, "circuit-breaker");
+    }
+  }
+}
+
 function analyzeORB(ind: MarketIndicators, hour: number, minute: number): StrategySignalResult | null {
   // Check trading window: 9:25 to 11:00 (expanded from 9:35-10:30 to catch early breakouts)
   if (hour < 9 || (hour === 9 && minute < 25) || hour > 11) return null;
@@ -978,52 +1022,96 @@ function analyzeEMA(ind: MarketIndicators): StrategySignalResult | null {
 }
 
 function analyzeVWAP(ind: MarketIndicators): StrategySignalResult | null {
-  if (ind.candleCount < 10) return null;
-  if (!ind.lastCandle) return null;
+  if (ind.candleCount < 15) return null;
+  if (!ind.lastCandle || !ind.prevCandle) return null;
+
+  // Volatility filter - avoid in extreme volatility
+  if (ind.indiaVix && ind.indiaVix > 25) return null;
 
   const distFromVwap = ((ind.spotPrice - ind.vwap) / ind.vwap) * 100;
-  const nearVwap = Math.abs(distFromVwap) < 0.15;
+  const absDist = Math.abs(distFromVwap);
 
-  if (!nearVwap) return null;
+  // More realistic distance - wait for actual pullback
+  if (absDist < 0.08 || absDist > 0.4) return null;
 
-  const trendBullish = ind.ema9 > ind.ema21;
-  const trendBearish = ind.ema9 < ind.ema21;
+  // Strong trend confirmation required
+  const trendBullish = ind.ema9 > ind.ema21 && ind.ema21 > ind.ema50 && ind.spotPrice > ind.ema50;
+  const trendBearish = ind.ema9 < ind.ema21 && ind.ema21 < ind.ema50 && ind.spotPrice < ind.ema50;
 
-  if (trendBullish && ind.spotPrice >= ind.vwap * 0.999) {
+  // Volume confirmation
+  const avgVol = ind.recentCandles.slice(-5).reduce((sum, c) => sum + (c.volume || 0), 0) / 5;
+  const volumeOk = (ind.lastCandle.volume || 0) > avgVol * 0.7; // At least 70% of average
+
+  if (!volumeOk) return null;
+
+  // Bullish setup: price pulled back to VWAP from above
+  if (trendBullish && distFromVwap < 0.05 && distFromVwap > -0.2) {
+    // Look for rejection from VWAP - long lower wick
+    const candleRange = ind.lastCandle.high - ind.lastCandle.low;
+    if (candleRange <= 0) return null;
+
+    const lowerWick = Math.min(ind.lastCandle.open, ind.lastCandle.close) - ind.lastCandle.low;
+    const wickRatio = lowerWick / candleRange;
+
+    // Require bounce confirmation
+    if (wickRatio < 0.25) return null; // Need lower wick showing rejection
+    if (ind.lastCandle.close < ind.vwap * 0.997) return null; // Close should be near/above VWAP
+
     let confidence = 70;
-    if (ind.spotPrice > ind.vwap) confidence += 3;
-    if (ind.rsi14 > 45 && ind.rsi14 < 70) confidence += 3;
-    if (ind.supertrendBullish) confidence += 3;
-    if (ind.momentum > 0) confidence += 2;
-    if (ind.lastCandle.close > ind.lastCandle.open) confidence += 3;
-    if (ind.lastCandle.low <= ind.vwap * 1.002 && ind.lastCandle.close > ind.vwap) confidence += 3;
-    const recentBullish = ind.recentCandles.slice(-3).filter(c => c.close > c.open).length;
-    if (recentBullish >= 2) confidence += 2;
+    if (wickRatio > 0.4) confidence += 5; // Strong rejection
+    if (ind.rsi14 > 40 && ind.rsi14 < 65) confidence += 4; // Good RSI range
+    if (ind.supertrendBullish) confidence += 4;
+    if (ind.lastCandle.close > ind.lastCandle.open) confidence += 3; // Bullish candle
+    if (ind.spotPrice > ind.vwap) confidence += 3; // Above VWAP
+    if (ind.prevCandle.close < ind.prevCandle.open && ind.lastCandle.close > ind.lastCandle.open) confidence += 3; // Reversal pattern
+
+    // Price must be making higher lows
+    const recentLows = ind.recentCandles.slice(-3).map(c => c.low);
+    const risingLows = recentLows[2] > recentLows[0];
+    if (!risingLows) confidence -= 5;
+
+    if (confidence < 75) return null; // Higher threshold
+
     return {
       direction: "CE",
-      confidence: Math.min(93, confidence),
-      reason: `VWAP pullback buy at ${ind.vwap.toFixed(0)}, bullish EMA trend, RSI ${ind.rsi14.toFixed(0)}`,
+      confidence: Math.min(92, confidence),
+      reason: `VWAP bounce ${distFromVwap.toFixed(2)}% from VWAP, wick ${(wickRatio * 100).toFixed(0)}%, RSI ${ind.rsi14.toFixed(0)}`,
       strikeOffset: 0,
-      riskPercent: 0.16,
+      riskPercent: 0.13, // Reduced risk
     };
   }
 
-  if (trendBearish && ind.spotPrice <= ind.vwap * 1.001) {
+  // Bearish setup: price rallied to VWAP from below
+  if (trendBearish && distFromVwap > -0.05 && distFromVwap < 0.2) {
+    const candleRange = ind.lastCandle.high - ind.lastCandle.low;
+    if (candleRange <= 0) return null;
+
+    const upperWick = ind.lastCandle.high - Math.max(ind.lastCandle.open, ind.lastCandle.close);
+    const wickRatio = upperWick / candleRange;
+
+    if (wickRatio < 0.25) return null;
+    if (ind.lastCandle.close > ind.vwap * 1.003) return null;
+
     let confidence = 70;
-    if (ind.spotPrice < ind.vwap) confidence += 3;
-    if (ind.rsi14 < 55) confidence += 3;
-    if (!ind.supertrendBullish) confidence += 3;
-    if (ind.momentum < 0) confidence += 2;
+    if (wickRatio > 0.4) confidence += 5;
+    if (ind.rsi14 < 60 && ind.rsi14 > 35) confidence += 4;
+    if (!ind.supertrendBullish) confidence += 4;
     if (ind.lastCandle.close < ind.lastCandle.open) confidence += 3;
-    if (ind.lastCandle.high >= ind.vwap * 0.998 && ind.lastCandle.close < ind.vwap) confidence += 3;
-    const recentBearish = ind.recentCandles.slice(-3).filter(c => c.close < c.open).length;
-    if (recentBearish >= 2) confidence += 2;
+    if (ind.spotPrice < ind.vwap) confidence += 3;
+    if (ind.prevCandle.close > ind.prevCandle.open && ind.lastCandle.close < ind.lastCandle.open) confidence += 3;
+
+    const recentHighs = ind.recentCandles.slice(-3).map(c => c.high);
+    const fallingHighs = recentHighs[2] < recentHighs[0];
+    if (!fallingHighs) confidence -= 5;
+
+    if (confidence < 75) return null;
+
     return {
       direction: "PE",
-      confidence: Math.min(93, confidence),
-      reason: `VWAP rejection sell at ${ind.vwap.toFixed(0)}, bearish EMA trend, RSI ${ind.rsi14.toFixed(0)}`,
+      confidence: Math.min(92, confidence),
+      reason: `VWAP rejection ${distFromVwap.toFixed(2)}% from VWAP, wick ${(wickRatio * 100).toFixed(0)}%, RSI ${ind.rsi14.toFixed(0)}`,
       strikeOffset: 0,
-      riskPercent: 0.16,
+      riskPercent: 0.13,
     };
   }
 
@@ -2755,6 +2843,11 @@ export async function getMarketRegime(instrument: string) {
   };
 }
 
+export async function trackSignalClose(strategy: string, status: string) {
+  const isWin = status === "target1_hit" || status === "target2_hit" || status === "target3_hit";
+  await trackStrategyResult(strategy, isWin);
+}
+
 export async function stopEngine() {
   engineRunning = false;
   currentInstruments.clear();
@@ -2762,6 +2855,8 @@ export async function stopEngine() {
   intervalIds = [];
   signalTokenMap.clear();
   strategyCooldown.clear();
+  strategyConsecutiveLosses.clear();
+  strategyDisabledUntil.clear();
   indicatorCache.clear();
 
   disconnectStream();
@@ -2859,6 +2954,7 @@ async function runAllStrategiesSequentially(instrument: InstrumentType) {
     for (const strategy of shuffled) {
       if (activeStrategies.has(strategy)) continue;
       if (isOnCooldown(strategy)) continue;
+      if (isStrategyDisabled(strategy)) continue; // Circuit breaker check
       if (!isStrategyWithinConfiguredWindow(strategy, hour, minute)) continue;
 
       const result = analyzeStrategy(strategy, indicators, hour, minute);

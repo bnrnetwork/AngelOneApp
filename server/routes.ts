@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
 import { loginToAngelOne, getRMS, getProfile, isLoggedIn, getOptionChainWithOI } from "./angelone";
-import { startEngine, stopEngine, getEngineStatus, setBroadcast, setAngeloneConnected, getMarketAnalysis, getMarketRegime, setCapital, getCapital, setDefaultCapital, getDefaultCapital } from "./strategies";
+import { startEngine, stopEngine, getEngineStatus, setBroadcast, setAngeloneConnected, getMarketAnalysis, getMarketRegime, setCapital, getCapital, setDefaultCapital, getDefaultCapital, trackSignalClose } from "./strategies";
 import { analyzeOI } from "./oi-analysis";
 import { log } from "./index";
 import { z } from "zod";
@@ -425,7 +425,12 @@ export async function registerRoutes(
       }
 
       const updated = await storage.exitSignal(id, resolvedExitPrice);
-      
+
+      // Track result for circuit breaker
+      if (updated) {
+        await trackSignalClose(updated.strategy, updated.status);
+      }
+
       await storage.createLog({
         level: "info",
         source: "signals",
