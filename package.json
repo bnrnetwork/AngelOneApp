@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "type": "module",
   "license": "MIT",
-  "scripts": {
-    "dev": "cross-env NODE_ENV=development tsx server/index.ts",
-    "build": "tsx script/build.ts",
-    "start": "NODE_ENV=production node dist/index.cjs",
-    "check": "tsc",
-    "db:push": "drizzle-kit push",
-    "migrate": "tsx server/runMigration.ts"
-  },
+"scripts": {
+  "dev": "cross-env NODE_ENV=development tsx server/index.ts",
+  "build": "node --loader tsx script/build.ts",
+  "start": "node dist/index.cjs",
+  "check": "tsc",
+  "db:push": "drizzle-kit push",
+  "migrate": "tsx server/runMigration.ts"
+},
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
